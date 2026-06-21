@@ -78,23 +78,66 @@ class Cutter:
     def __init__(self, args):
         self.args = args
 
-    def _write_concat_file(self, media_fn, segments):
-        fd, concat_fn = tempfile.mkstemp(suffix=".ffconcat", text=True)
+    def _has_audio(self, media_fn):
+        cmd = [
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "a:0",
+            "-show_entries",
+            "stream=index",
+            "-of",
+            "csv=p=0",
+            media_fn,
+        ]
+        result = subprocess.run(cmd, check=False, capture_output=True, text=True)
+        return bool(result.stdout.strip())
+
+    def _write_filter_script(self, segments, is_video_file, has_audio):
+        fd, filter_fn = tempfile.mkstemp(suffix=".fffilter", text=True)
         with os.fdopen(fd, "w", encoding=self.args.encoding) as f:
-            f.write("ffconcat version 1.0\n")
-            media_fn = os.path.abspath(media_fn).replace("'", "'\\''")
-            for s in segments:
-                f.write(f"file '{media_fn}'\n")
-                f.write(f"inpoint {s['start']:.3f}\n")
-                f.write(f"outpoint {s['end']:.3f}\n")
-        return concat_fn
+            labels = []
+            for i, s in enumerate(segments):
+                start = s["start"]
+                end = s["end"]
+                if is_video_file:
+                    f.write(
+                        f"[0:v]trim=start={start:.3f}:end={end:.3f},"
+                        f"setpts=PTS-STARTPTS[v{i}];\n"
+                    )
+                    labels.append(f"[v{i}]")
+                if has_audio:
+                    f.write(
+                        f"[0:a]atrim=start={start:.3f}:end={end:.3f},"
+                        f"asetpts=PTS-STARTPTS[a{i}];\n"
+                    )
+                    labels.append(f"[a{i}]")
+
+            if is_video_file and has_audio:
+                f.write(
+                    "".join(labels)
+                    + f"concat=n={len(segments)}:v=1:a=1[outv][outa]\n"
+                )
+            elif is_video_file:
+                f.write(
+                    "".join(labels)
+                    + f"concat=n={len(segments)}:v=1:a=0[outv]\n"
+                )
+            else:
+                f.write(
+                    "".join(labels)
+                    + f"concat=n={len(segments)}:v=0:a=1[outa]\n"
+                )
+        return filter_fn
 
     def _run_ffmpeg_cut(self, media_fn, output_fn, segments, is_video_file):
         if not segments:
             logging.warning("No segments selected, skip cutting")
             return
 
-        concat_fn = self._write_concat_file(media_fn, segments)
+        has_audio = self._has_audio(media_fn)
+        filter_fn = self._write_filter_script(segments, is_video_file, has_audio)
         try:
             total = sum(s["end"] - s["start"] for s in segments)
             logging.info(
@@ -108,19 +151,15 @@ class Cutter:
                 "-hide_banner",
                 "-loglevel",
                 "error",
-                "-f",
-                "concat",
-                "-safe",
-                "0",
                 "-i",
-                concat_fn,
+                media_fn,
+                "-filter_complex_script",
+                filter_fn,
             ]
             if is_video_file:
                 cmd += [
                     "-map",
-                    "0:v:0",
-                    "-map",
-                    "0:a:0?",
+                    "[outv]",
                     "-c:v",
                     "libx264",
                     "-preset",
@@ -129,19 +168,17 @@ class Cutter:
                     self.args.bitrate,
                     "-pix_fmt",
                     "yuv420p",
-                    "-c:a",
-                    "aac",
-                    "-b:a",
-                    "192k",
                     "-movflags",
                     "+faststart",
                 ]
+                if has_audio:
+                    cmd += ["-map", "[outa]", "-c:a", "aac", "-b:a", "192k"]
             else:
-                cmd += ["-vn", "-c:a", "libmp3lame", "-b:a", self.args.bitrate]
+                cmd += ["-map", "[outa]", "-vn", "-c:a", "libmp3lame", "-b:a", self.args.bitrate]
             cmd.append(output_fn)
             subprocess.run(cmd, check=True)
         finally:
-            os.remove(concat_fn)
+            os.remove(filter_fn)
 
     def run(self):
         fns = {"srt": None, "media": None, "md": None}

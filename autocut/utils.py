@@ -157,6 +157,24 @@ def merge_adjacent_segments(segments, threshold):
     return results
 
 
+def split_long_segments(segments, max_length):
+    if not max_length:
+        return segments
+
+    results = []
+    for seg in segments:
+        start = int(seg["start"])
+        end = int(seg["end"])
+        if end - start <= max_length:
+            results.append(seg)
+            continue
+        while start < end:
+            chunk_end = min(start + int(max_length), end)
+            results.append({"start": start, "end": chunk_end})
+            start = chunk_end
+    return results
+
+
 def compact_rst(sub_fn, encoding):
     cc = opencc.OpenCC("t2s")
 

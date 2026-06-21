@@ -1,6 +1,8 @@
 import datetime
 import logging
 import os
+import tempfile
+import wave
 from abc import ABC, abstractmethod
 from typing import Literal, Union, List, Any, TypedDict
 
@@ -386,5 +388,355 @@ class FasterWhisperModel(AbstractWhisperModel):
                     _add_sub(prev_end, start, "< No Speech >")
                 _add_sub(start, end, s["text"])
                 prev_end = end
+
+        return subs
+
+
+class SenseVoiceModel(AbstractWhisperModel):
+    MODEL_ALIASES = {
+        "small": "FunAudioLLM/SenseVoiceSmall",
+        "SenseVoiceSmall": "FunAudioLLM/SenseVoiceSmall",
+        "FunAudioLLM/SenseVoiceSmall": "FunAudioLLM/SenseVoiceSmall",
+        "iic/SenseVoiceSmall": "iic/SenseVoiceSmall",
+    }
+
+    LANG_ALIASES = {
+        "zh": "zh",
+        "en": "en",
+        "Cantonese": "yue",
+        "Japanese": "ja",
+        "Korean": "ko",
+    }
+
+    def __init__(self, sample_rate=16000):
+        super().__init__("sensevoice", sample_rate)
+        self.device = None
+        self.text_mode = "readable"
+        self.postprocess = lambda x: x
+
+    def load(
+        self,
+        model_name: str = "SenseVoiceSmall",
+        device: Union[Literal["cpu", "cuda"], None] = None,
+    ):
+        try:
+            from funasr import AutoModel
+        except ImportError:
+            raise Exception(
+                "Please use sensevoice mode(pip install '.[sensevoice]') or all mode(pip install '.[all]')"
+            )
+
+        self.device = self._resolve_device(device)
+        model_dir = self.MODEL_ALIASES.get(model_name, model_name)
+        self.whisper_model = AutoModel(model=model_dir, device=self.device, hub="hf")
+
+    def configure(self, text_mode="readable", max_segment_seconds=0.0):
+        del max_segment_seconds
+        self.text_mode = text_mode
+        if text_mode == "readable":
+            try:
+                from funasr.utils.postprocess_utils import rich_transcription_postprocess
+
+                self.postprocess = rich_transcription_postprocess
+            except ImportError:
+                self.postprocess = lambda x: x
+        else:
+            self.postprocess = lambda x: x
+
+    def _resolve_device(self, device):
+        if device == "cuda":
+            return "cuda:0"
+        if device == "cpu":
+            return "cpu"
+
+        try:
+            import torch
+
+            return "cuda:0" if torch.cuda.is_available() else "cpu"
+        except ImportError:
+            return "cpu"
+
+    def _sensevoice_language(self, lang: LANG):
+        return self.LANG_ALIASES.get(lang, "auto")
+
+    def _write_temp_wav(self, audio):
+        fd, path = tempfile.mkstemp(prefix="autocut_sensevoice_", suffix=".wav")
+        os.close(fd)
+        pcm = np.clip(audio, -1.0, 1.0)
+        pcm = (pcm * 32767.0).astype(np.int16)
+        with wave.open(path, "wb") as f:
+            f.setnchannels(1)
+            f.setsampwidth(2)
+            f.setframerate(self.sample_rate)
+            f.writeframes(pcm.tobytes())
+        return path
+
+    def _clean_text(self, text):
+        text = "" if text is None else str(text).strip()
+        if self.postprocess:
+            text = self.postprocess(text)
+        return cc.convert(text.strip())
+
+    def _transcribe(self, audio, seg, lang, prompt):
+        del prompt
+        start = int(seg["start"])
+        end = int(seg["end"])
+        temp_file = self._write_temp_wav(audio[start:end])
+        try:
+            result = self.whisper_model.generate(
+                input=temp_file,
+                cache={},
+                language=self._sensevoice_language(lang),
+                use_itn=self.text_mode == "readable",
+                batch_size_s=60,
+            )
+        finally:
+            os.remove(temp_file)
+
+        return {"origin_timestamp": seg, "result": result}
+
+    def transcribe(
+        self,
+        audio: np.ndarray,
+        speech_array_indices: List[SPEECH_ARRAY_INDEX],
+        lang: LANG,
+        prompt: str,
+    ):
+        res = []
+        for seg in (
+            speech_array_indices
+            if len(speech_array_indices) == 1
+            else tqdm(speech_array_indices)
+        ):
+            res.append(self._transcribe(audio, seg, lang, prompt))
+        return res
+
+    def _extract_items(self, result):
+        if isinstance(result, dict):
+            if "sentence_info" in result and result["sentence_info"]:
+                return result["sentence_info"]
+            return [result]
+        if isinstance(result, list):
+            items = []
+            for r in result:
+                items.extend(self._extract_items(r))
+            return items
+        return []
+
+    def _time_seconds(self, value):
+        if value is None:
+            return None
+        value = float(value)
+        # FunASR sentence timestamps are commonly in milliseconds.
+        return value / 1000.0 if value > 100 else value
+
+    def gen_srt(self, transcribe_results):
+        subs = []
+
+        def _add_sub(start, end, text):
+            text = self._clean_text(text)
+            if not text:
+                return
+            subs.append(
+                srt.Subtitle(
+                    index=0,
+                    start=datetime.timedelta(seconds=start),
+                    end=datetime.timedelta(seconds=end),
+                    content=text,
+                )
+            )
+
+        prev_end = 0
+        for r in transcribe_results:
+            origin = r["origin_timestamp"]
+            origin_start = origin["start"] / self.sample_rate
+            origin_end = origin["end"] / self.sample_rate
+            added = False
+            for item in self._extract_items(r["result"]):
+                text = item.get("text") or item.get("sentence") or item.get("raw_text")
+                start = self._time_seconds(item.get("start"))
+                end = self._time_seconds(item.get("end"))
+                if start is None or end is None:
+                    continue
+                start += origin_start
+                end = min(end + origin_start, origin_end)
+                if start > end:
+                    continue
+                if start > prev_end + 1.0:
+                    _add_sub(prev_end, start, "< No Speech >")
+                _add_sub(start, end, text)
+                prev_end = end
+                added = True
+
+            if not added:
+                text = " ".join(
+                    self._clean_text(item.get("text", ""))
+                    for item in self._extract_items(r["result"])
+                ).strip()
+                if origin_start > prev_end + 1.0:
+                    _add_sub(prev_end, origin_start, "< No Speech >")
+                _add_sub(origin_start, origin_end, text)
+                prev_end = origin_end
+
+        return subs
+
+
+class Qwen3ASRModel(AbstractWhisperModel):
+    MODEL_ALIASES = {
+        "Qwen3-ASR-1.7B": "Qwen/Qwen3-ASR-1.7B",
+        "Qwen/Qwen3-ASR-1.7B": "Qwen/Qwen3-ASR-1.7B",
+    }
+
+    LANG_ALIASES = {
+        "zh": "Chinese",
+        "en": "English",
+        "yue": "Cantonese",
+        "Arabic": "Arabic",
+        "German": "German",
+        "French": "French",
+        "Spanish": "Spanish",
+        "Portuguese": "Portuguese",
+        "Indonesian": "Indonesian",
+        "Italian": "Italian",
+        "Korean": "Korean",
+        "Russian": "Russian",
+        "Thai": "Thai",
+        "Vietnamese": "Vietnamese",
+        "Japanese": "Japanese",
+        "Turkish": "Turkish",
+        "Hindi": "Hindi",
+        "Malay": "Malay",
+        "Dutch": "Dutch",
+        "Swedish": "Swedish",
+        "Danish": "Danish",
+        "Finnish": "Finnish",
+        "Polish": "Polish",
+        "Czech": "Czech",
+        "Persian": "Persian",
+        "Greek": "Greek",
+        "Hungarian": "Hungarian",
+        "Macedonian": "Macedonian",
+        "Romanian": "Romanian",
+    }
+
+    def __init__(self, sample_rate=16000):
+        super().__init__("qwen3-asr", sample_rate)
+        self.device = None
+
+    def load(
+        self,
+        model_name: str = "Qwen3-ASR-1.7B",
+        device: Union[Literal["cpu", "cuda"], None] = None,
+    ):
+        try:
+            import torch
+            from qwen_asr import Qwen3ASRModel as Qwen3ASRRuntimeModel
+        except ImportError:
+            raise Exception(
+                "Please use qwen3-asr mode(pip install '.[qwen3-asr]') or all mode(pip install '.[all]')"
+            )
+
+        self.device = self._resolve_device(device)
+        model_dir = self.MODEL_ALIASES.get(model_name, model_name)
+        self.whisper_model = Qwen3ASRRuntimeModel.from_pretrained(
+            model_dir,
+            dtype=torch.bfloat16 if self.device.startswith("cuda") else torch.float32,
+            device_map=self.device,
+            max_inference_batch_size=32,
+            max_new_tokens=512,
+        )
+
+    def _resolve_device(self, device):
+        if device == "cuda":
+            return "cuda:0"
+        if device == "cpu":
+            return "cpu"
+
+        try:
+            import torch
+
+            return "cuda:0" if torch.cuda.is_available() else "cpu"
+        except ImportError:
+            return "cpu"
+
+    def _qwen_language(self, lang: LANG):
+        return self.LANG_ALIASES.get(lang)
+
+    def _write_temp_wav(self, audio):
+        fd, path = tempfile.mkstemp(prefix="autocut_qwen3_asr_", suffix=".wav")
+        os.close(fd)
+        pcm = np.clip(audio, -1.0, 1.0)
+        pcm = (pcm * 32767.0).astype(np.int16)
+        with wave.open(path, "wb") as f:
+            f.setnchannels(1)
+            f.setsampwidth(2)
+            f.setframerate(self.sample_rate)
+            f.writeframes(pcm.tobytes())
+        return path
+
+    def _transcribe(self, audio, seg, lang, prompt):
+        del prompt
+        start = int(seg["start"])
+        end = int(seg["end"])
+        temp_file = self._write_temp_wav(audio[start:end])
+        try:
+            result = self.whisper_model.transcribe(
+                audio=temp_file,
+                language=self._qwen_language(lang),
+            )
+        finally:
+            os.remove(temp_file)
+
+        return {"origin_timestamp": seg, "result": result}
+
+    def transcribe(
+        self,
+        audio: np.ndarray,
+        speech_array_indices: List[SPEECH_ARRAY_INDEX],
+        lang: LANG,
+        prompt: str,
+    ):
+        res = []
+        for seg in (
+            speech_array_indices
+            if len(speech_array_indices) == 1
+            else tqdm(speech_array_indices)
+        ):
+            res.append(self._transcribe(audio, seg, lang, prompt))
+        return res
+
+    def _extract_text(self, result):
+        if isinstance(result, list):
+            return " ".join(self._extract_text(item) for item in result).strip()
+        if isinstance(result, dict):
+            return str(result.get("text", "")).strip()
+        return str(getattr(result, "text", "")).strip()
+
+    def gen_srt(self, transcribe_results):
+        subs = []
+
+        def _add_sub(start, end, text):
+            text = cc.convert(text.strip())
+            if not text:
+                return
+            subs.append(
+                srt.Subtitle(
+                    index=0,
+                    start=datetime.timedelta(seconds=start),
+                    end=datetime.timedelta(seconds=end),
+                    content=text,
+                )
+            )
+
+        prev_end = 0
+        for r in transcribe_results:
+            origin = r["origin_timestamp"]
+            origin_start = origin["start"] / self.sample_rate
+            origin_end = origin["end"] / self.sample_rate
+            text = self._extract_text(r["result"])
+            if origin_start > prev_end + 1.0:
+                _add_sub(prev_end, origin_start, "< No Speech >")
+            _add_sub(origin_start, origin_end, text)
+            prev_end = origin_end
 
         return subs

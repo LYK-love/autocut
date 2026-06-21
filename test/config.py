@@ -58,3 +58,5 @@ class TestArgs:
             "faster" if os.environ.get("WHISPER_MODE") == "faster" else "whisper"
         )
         self.openai_rpm = 3
+        self.asr_text_mode = "readable"
+        self.asr_max_segment_seconds = 0.0

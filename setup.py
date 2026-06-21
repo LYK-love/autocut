@@ -26,12 +26,15 @@ setup(
     long_description=open("README.md", "r", encoding="utf-8").read(),
     long_description_content_type="text/markdown",
     extras_require={
-        "all": transcribe_requirements + ["moviepy", "openai", "faster-whisper"],
+        "all": transcribe_requirements
+        + ["moviepy", "openai", "faster-whisper", "funasr", "qwen-asr"],
         "transcribe": transcribe_requirements,
         "merge": ["moviepy"],
         "test": ["parameterized"],
         "openai": transcribe_requirements + ["openai"],
         "faster": transcribe_requirements + ["faster-whisper"],
+        "sensevoice": transcribe_requirements + ["funasr"],
+        "qwen3-asr": transcribe_requirements + ["qwen-asr"],
     },
     packages=find_packages(),
     entry_points={

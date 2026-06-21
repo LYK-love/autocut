@@ -73,6 +73,8 @@ class WhisperModel(Enum):
     LARGE_V2 = "large-v2"
     LARGE_V3 = "large-v3"
     LARGE_V3_TURBO = "large-v3-turbo"
+    SENSEVOICE_SMALL = "SenseVoiceSmall"
+    QWEN3_ASR_1_7B = "Qwen3-ASR-1.7B"
 
     @staticmethod
     def get_values():
@@ -83,6 +85,8 @@ class WhisperMode(Enum):
     WHISPER = "whisper"
     OPENAI = "openai"
     FASTER = "faster"
+    SENSEVOICE = "sensevoice"
+    QWEN3_ASR = "qwen3-asr"
 
     @staticmethod
     def get_values():

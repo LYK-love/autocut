@@ -120,7 +120,7 @@ def main():
         type=str,
         default=WhisperMode.WHISPER.value,
         choices=WhisperMode.get_values(),
-        help="Whisper inference mode: whisper: run whisper locally; openai: use openai api.",
+        help="ASR backend. Kept as --whisper-mode for CLI compatibility.",
     )
     parser.add_argument(
         "--openai-rpm",
@@ -135,7 +135,7 @@ def main():
         type=str,
         default=WhisperModel.SMALL.value,
         choices=WhisperModel.get_values(),
-        help="The whisper model used to transcribe.",
+        help="The ASR model used to transcribe.",
     )
     parser.add_argument(
         "--bitrate",
@@ -145,6 +145,19 @@ def main():
     )
     parser.add_argument(
         "--vad", help="If or not use VAD", choices=["1", "0", "auto"], default="auto"
+    )
+    parser.add_argument(
+        "--asr-text-mode",
+        type=str,
+        default="readable",
+        choices=["verbatim", "readable"],
+        help="ASR text style. verbatim avoids extra text cleanup for editing; readable applies backend text normalization when available.",
+    )
+    parser.add_argument(
+        "--asr-max-segment-seconds",
+        type=float,
+        default=0.0,
+        help="Split long ASR speech segments into shorter chunks. Use 0 to disable.",
     )
     parser.add_argument(
         "--force",

@@ -34,6 +34,16 @@ class Transcribe:
                     self.sampling_rate
                 )
                 self.whisper_model.load(self.args.whisper_model, self.args.device)
+            elif self.args.whisper_mode == WhisperMode.SENSEVOICE.value:
+                self.whisper_model = whisper_model.SenseVoiceModel(self.sampling_rate)
+                self.whisper_model.load(self.args.whisper_model, self.args.device)
+                self.whisper_model.configure(
+                    getattr(self.args, "asr_text_mode", "readable"),
+                    getattr(self.args, "asr_max_segment_seconds", 0.0),
+                )
+            elif self.args.whisper_mode == WhisperMode.QWEN3_ASR.value:
+                self.whisper_model = whisper_model.Qwen3ASRModel(self.sampling_rate)
+                self.whisper_model.load(self.args.whisper_model, self.args.device)
         logging.info(f"Done Init model in {time.time() - tic:.1f} sec")
 
     def run(self):
@@ -45,6 +55,7 @@ class Transcribe:
 
             audio = utils.load_audio(input, sr=self.sampling_rate)
             speech_array_indices = self._detect_voice_activity(audio)
+            speech_array_indices = self._split_long_segments(speech_array_indices)
             transcribe_results = self._transcribe(input, audio, speech_array_indices)
 
             output = name + ".srt"
@@ -86,6 +97,11 @@ class Transcribe:
         logging.info(f"Done voice activity detection in {time.time() - tic:.1f} sec")
         return speeches if len(speeches) > 1 else [{"start": 0, "end": len(audio)}]
 
+    def _split_long_segments(self, speech_array_indices):
+        max_seconds = getattr(self.args, "asr_max_segment_seconds", 0.0)
+        max_samples = max_seconds * self.sampling_rate if max_seconds else 0
+        return utils.split_long_segments(speech_array_indices, max_samples)
+
     def _transcribe(
         self,
         input: str,
@@ -99,6 +115,8 @@ class Transcribe:
             )
             if self.args.whisper_mode == WhisperMode.WHISPER.value
             or self.args.whisper_mode == WhisperMode.FASTER.value
+            or self.args.whisper_mode == WhisperMode.SENSEVOICE.value
+            or self.args.whisper_mode == WhisperMode.QWEN3_ASR.value
             else self.whisper_model.transcribe(
                 input, audio, speech_array_indices, self.args.lang, self.args.prompt
             )

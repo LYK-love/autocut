@@ -13,16 +13,23 @@ class Transcribe:
     def __init__(
         self,
         whisper_mode: Union[
-            WhisperMode.WHISPER.value, WhisperMode.FASTER.value
+            WhisperMode.WHISPER.value,
+            WhisperMode.FASTER.value,
+            WhisperMode.SENSEVOICE.value,
+            WhisperMode.QWEN3_ASR.value,
         ] = WhisperMode.WHISPER.value,
         whisper_model_size: WhisperModel.get_values() = "small",
         vad: bool = True,
         device: Union[Literal["cpu", "cuda"], None] = None,
+        asr_text_mode: Literal["verbatim", "readable"] = "readable",
+        asr_max_segment_seconds: float = 0.0,
     ):
         self.whisper_mode = whisper_mode
         self.whisper_model_size = whisper_model_size
         self.vad = vad
         self.device = device
+        self.asr_text_mode = asr_text_mode
+        self.asr_max_segment_seconds = asr_max_segment_seconds
         self.sampling_rate = 16000
         self.whisper_model = None
         self.vad_model = None
@@ -38,10 +45,20 @@ class Transcribe:
                     self.sampling_rate
                 )
                 self.whisper_model.load(self.whisper_model_size, self.device)
+            elif self.whisper_mode == WhisperMode.SENSEVOICE.value:
+                self.whisper_model = whisper_model.SenseVoiceModel(self.sampling_rate)
+                self.whisper_model.load(self.whisper_model_size, self.device)
+                self.whisper_model.configure(
+                    self.asr_text_mode, self.asr_max_segment_seconds
+                )
+            elif self.whisper_mode == WhisperMode.QWEN3_ASR.value:
+                self.whisper_model = whisper_model.Qwen3ASRModel(self.sampling_rate)
+                self.whisper_model.load(self.whisper_model_size, self.device)
         logging.info(f"Done Init model in {time.time() - tic:.1f} sec")
 
     def run(self, audio: np.ndarray, lang: LANG, prompt: str = ""):
         speech_array_indices = self._detect_voice_activity(audio)
+        speech_array_indices = self._split_long_segments(speech_array_indices)
         transcribe_results = self._transcribe(audio, speech_array_indices, lang, prompt)
         return transcribe_results
 
@@ -80,6 +97,14 @@ class Transcribe:
 
         logging.info(f"Done voice activity detection in {time.time() - tic:.1f} sec")
         return speeches if len(speeches) > 1 else [{"start": 0, "end": len(audio)}]
+
+    def _split_long_segments(self, speech_array_indices):
+        max_samples = (
+            self.asr_max_segment_seconds * self.sampling_rate
+            if self.asr_max_segment_seconds
+            else 0
+        )
+        return utils.split_long_segments(speech_array_indices, max_samples)
 
     def _transcribe(
         self,

@@ -6,7 +6,7 @@
 
 AutoCut is a text-guided video/audio cutter.
 
-It uses ASR model, like OpenAI whister, to transcribe a video into subtitles (`.srt` files), generates a Markdown selection file, then cuts the original media according to the sentences you mark as kept.
+It uses ASR models, such as Whisper, SenseVoiceSmall, or Qwen3-ASR, to transcribe a video into subtitles (`.srt` files), generates a Markdown selection file, then cuts the original media according to the sentences you mark as kept.
 
 ```text
 video.mp4
@@ -31,8 +31,10 @@ subtitle timing  editable selection file
 - Generate an editable `.md` selection file
 - Keep or remove sentences by checking Markdown boxes
 - Cut video/audio according to subtitle timestamps
-- Support local Whisper, faster-whisper, and OpenAI Whisper API
+- Support local Whisper, faster-whisper, OpenAI Whisper API, SenseVoiceSmall, and Qwen3-ASR
 - Support CUDA GPU transcription when available
+
+See [ASR models](docs/asr-models.md) for supported transcription backends and recommended use cases.
 
 ## Install
 
@@ -63,11 +65,26 @@ sudo apt update && sudo apt install ffmpeg
 Optional backends:
 
 ```bash
-pip install '.[transcribe]'  # local Whisper transcription
-pip install '.[faster]'  # faster-whisper
-pip install '.[openai]'  # OpenAI Whisper API
-pip install '.[all]'     # all optional dependencies
+pip install '.[transcribe]'  # local Whisper
+pip install '.[faster]'      # faster-whisper
+pip install '.[openai]'      # OpenAI Whisper API
+pip install '.[sensevoice]'  # SenseVoiceSmall via FunASR
+pip install '.[qwen3-asr]'   # Qwen3-ASR-1.7B via qwen-asr
+pip install '.[all]'         # all optional dependencies
 ```
+
+## Supported ASR Model Cards
+
+| Model card | Backend | Model option | Install extra | Best fit | Timestamp source |
+| --- | --- | --- | --- | --- | --- |
+| OpenAI Whisper local | `--whisper-mode whisper` | `small`, `large-v3`, `large-v3-turbo` | `.[transcribe]` | General offline transcription baseline | Whisper segment timestamps |
+| faster-whisper | `--whisper-mode faster` | `small`, `large-v3`, `large-v3-turbo` | `.[faster]` | Faster local Whisper inference on GPU | faster-whisper segment timestamps |
+| OpenAI Whisper API | `--whisper-mode openai` | API uses `whisper-1` | `.[openai]` | Remote API transcription | API SRT timestamps |
+| SenseVoiceSmall | `--whisper-mode sensevoice` | `SenseVoiceSmall` | `.[sensevoice]` | Chinese-heavy speech with English technical terms | FunASR sentence timestamps when available, otherwise AutoCut VAD segment timestamps |
+| Qwen3-ASR-1.7B | `--whisper-mode qwen3-asr` | `Qwen3-ASR-1.7B` | `.[qwen3-asr]` | High-accuracy multilingual local ASR | AutoCut VAD segment timestamps; Qwen forced alignment is not wired yet |
+
+See [ASR models](docs/asr-models.md) for backend details and recommended
+commands.
 
 ## Quick Start
 
@@ -98,6 +115,16 @@ Use GPU explicitly:
 ```bash
 autocut -t video.mp4 --device cuda
 ```
+
+For Chinese-heavy videos with English terms, try SenseVoiceSmall:
+
+```bash
+autocut -t video.mp4 --whisper-mode sensevoice --whisper-model SenseVoiceSmall --device cuda --lang zh
+```
+
+AutoCut defaults to readable ASR text and does not force extra speech chunking.
+For editing repeated takes, you can enable `--asr-text-mode verbatim` and
+`--asr-max-segment-seconds 5` manually.
 
 ### 2. Edit the Markdown file
 
@@ -160,7 +187,7 @@ autocut -c video.mp4 video.srt video.md --bitrate 20m
 
 ## Remote Transcription, Local Cutting
 
-If the original video is on a local machine, such as macOS, but Whisper should run
+If the original video is on a local machine, such as macOS, but ASR should run
 on a GPU server, do not upload the full video just to download the cut video later.
 Keep the original video local, send only extracted audio to the server, then bring
 the generated `.srt` and `.md` files back for local editing and cutting.
@@ -178,18 +205,18 @@ macOS:
   extract audio
   edit Markdown
   run ffmpeg cutting
-  no torch / whisper
+  no torch / ASR model weights
 
 GPU server:
   receive audio only
-  run Whisper
+  run ASR
   produce .srt and .md
 ```
 
 ### 1. Extract audio on macOS
 
 ```bash
-ffmpeg -i video.mov -vn -ac 1 -ar 16000 video.wav
+ffmpeg -y -i video.mov -vn -ac 1 -ar 16000 video.wav
 ```
 
 ### 2. Send the audio to the GPU server
@@ -200,15 +227,22 @@ rsync -avh video.wav user@server:~/videos/transcribe_jobs/
 
 ### 3. Transcribe on the GPU server
 
-The server environment needs the transcription dependencies:
+The server environment needs one transcription backend. For SenseVoiceSmall:
 
 ```bash
-pip install '.[transcribe]'
+pip install '.[sensevoice]'
 ```
 
 ```bash
 cd ~/videos/transcribe_jobs
-autocut -t video.wav --device cuda --whisper-model large-v3 --lang zh
+autocut -t video.wav --whisper-mode sensevoice --whisper-model SenseVoiceSmall --device cuda --lang zh
+```
+
+For editing repeated takes, use verbatim mode. If you explicitly want cleaner
+display text, use the default or pass:
+
+```bash
+autocut -t video.wav --whisper-mode sensevoice --whisper-model SenseVoiceSmall --asr-text-mode readable
 ```
 
 This creates:
@@ -298,6 +332,29 @@ Use faster-whisper:
 ```bash
 autocut -t video.mp4 --whisper-mode faster
 ```
+
+Use SenseVoiceSmall:
+
+```bash
+pip install '.[sensevoice]'
+autocut -t video.mp4 --whisper-mode sensevoice --whisper-model SenseVoiceSmall --device cuda --lang zh
+```
+
+Use Qwen3-ASR-1.7B:
+
+```bash
+pip install '.[qwen3-asr]'
+autocut -t video.mp4 --whisper-mode qwen3-asr --whisper-model Qwen3-ASR-1.7B --device cuda --lang zh
+```
+
+Preserve repeated wording for editing:
+This segment splitting option applies to all ASR backends.
+
+```bash
+autocut -t video.mp4 --whisper-mode sensevoice --whisper-model SenseVoiceSmall --asr-text-mode verbatim --asr-max-segment-seconds 5
+```
+
+See [ASR models](docs/asr-models.md) for a compact backend table.
 
 Use OpenAI Whisper API:
 

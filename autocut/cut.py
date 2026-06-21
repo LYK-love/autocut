@@ -1,9 +1,10 @@
 import logging
 import os
 import re
+import subprocess
+import tempfile
 
 import srt
-from moviepy import editor
 
 from . import utils
 
@@ -43,6 +44,8 @@ class Merger:
         md.write()
 
     def run(self):
+        from moviepy import editor
+
         md_fn = self.args.inputs[0]
         md = utils.MD(md_fn, self.args.encoding)
         if not md.done_editing():
@@ -74,6 +77,71 @@ class Merger:
 class Cutter:
     def __init__(self, args):
         self.args = args
+
+    def _write_concat_file(self, media_fn, segments):
+        fd, concat_fn = tempfile.mkstemp(suffix=".ffconcat", text=True)
+        with os.fdopen(fd, "w", encoding=self.args.encoding) as f:
+            f.write("ffconcat version 1.0\n")
+            media_fn = os.path.abspath(media_fn).replace("'", "'\\''")
+            for s in segments:
+                f.write(f"file '{media_fn}'\n")
+                f.write(f"inpoint {s['start']:.3f}\n")
+                f.write(f"outpoint {s['end']:.3f}\n")
+        return concat_fn
+
+    def _run_ffmpeg_cut(self, media_fn, output_fn, segments, is_video_file):
+        if not segments:
+            logging.warning("No segments selected, skip cutting")
+            return
+
+        concat_fn = self._write_concat_file(media_fn, segments)
+        try:
+            total = sum(s["end"] - s["start"] for s in segments)
+            logging.info(
+                f"Cutting {len(segments)} segments into {output_fn}, "
+                f"estimated duration {total / 60:.1f} min"
+            )
+
+            cmd = [
+                "ffmpeg",
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "concat",
+                "-safe",
+                "0",
+                "-i",
+                concat_fn,
+            ]
+            if is_video_file:
+                cmd += [
+                    "-map",
+                    "0:v:0",
+                    "-map",
+                    "0:a:0?",
+                    "-c:v",
+                    "libx264",
+                    "-preset",
+                    "veryfast",
+                    "-b:v",
+                    self.args.bitrate,
+                    "-pix_fmt",
+                    "yuv420p",
+                    "-c:a",
+                    "aac",
+                    "-b:a",
+                    "192k",
+                    "-movflags",
+                    "+faststart",
+                ]
+            else:
+                cmd += ["-vn", "-c:a", "libmp3lame", "-b:a", self.args.bitrate]
+            cmd.append(output_fn)
+            subprocess.run(cmd, check=True)
+        finally:
+            os.remove(concat_fn)
 
     def run(self):
         fns = {"srt": None, "media": None, "md": None}
@@ -125,43 +193,5 @@ class Cutter:
                         {"start": x.start.total_seconds(), "end": x.end.total_seconds()}
                     )
 
-        if is_video_file:
-            media = editor.VideoFileClip(fns["media"])
-        else:
-            media = editor.AudioFileClip(fns["media"])
-
-        # Add a fade between two clips. Not quite necessary. keep code here for reference
-        # fade = 0
-        # segments = _expand_segments(segments, fade, 0, video.duration)
-        # clips = [video.subclip(
-        #         s['start'], s['end']).crossfadein(fade) for s in segments]
-        # final_clip = editor.concatenate_videoclips(clips, padding = -fade)
-
-        clips = [media.subclip(s["start"], s["end"]) for s in segments]
-        if is_video_file:
-            final_clip: editor.VideoClip = editor.concatenate_videoclips(clips)
-            logging.info(
-                f"Reduced duration from {media.duration:.1f} to {final_clip.duration:.1f}"
-            )
-
-            aud = final_clip.audio.set_fps(44100)
-            final_clip = final_clip.without_audio().set_audio(aud)
-            final_clip = final_clip.fx(editor.afx.audio_normalize)
-
-            # an alternative to birate is use crf, e.g. ffmpeg_params=['-crf', '18']
-            final_clip.write_videofile(
-                output_fn, audio_codec="aac", bitrate=self.args.bitrate
-            )
-        else:
-            final_clip: editor.AudioClip = editor.concatenate_audioclips(clips)
-            logging.info(
-                f"Reduced duration from {media.duration:.1f} to {final_clip.duration:.1f}"
-            )
-
-            final_clip = final_clip.fx(editor.afx.audio_normalize)
-            final_clip.write_audiofile(
-                output_fn, codec="libmp3lame", fps=44100, bitrate=self.args.bitrate
-            )
-
-        media.close()
+        self._run_ffmpeg_cut(fns["media"], output_fn, segments, is_video_file)
         logging.info(f"Saved media to {output_fn}")

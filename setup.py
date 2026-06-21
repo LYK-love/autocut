@@ -2,12 +2,14 @@ from setuptools import setup, find_packages
 
 requirements = [
     "ffmpeg-python",
-    "moviepy",
-    "openai-whisper",
+    "numpy",
     "opencc-python-reimplemented",
-    "parameterized",
-    "pydub",
     "srt",
+]
+
+transcribe_requirements = [
+    "openai-whisper",
+    "pydub",
     "torchaudio",
     "tqdm",
 ]
@@ -24,9 +26,12 @@ setup(
     long_description=open("README.md", "r", encoding="utf-8").read(),
     long_description_content_type="text/markdown",
     extras_require={
-        "all": ["openai", "faster-whisper"],
-        "openai": ["openai"],
-        "faster": ["faster-whisper"],
+        "all": transcribe_requirements + ["moviepy", "openai", "faster-whisper"],
+        "transcribe": transcribe_requirements,
+        "merge": ["moviepy"],
+        "test": ["parameterized"],
+        "openai": transcribe_requirements + ["openai"],
+        "faster": transcribe_requirements + ["faster-whisper"],
     },
     packages=find_packages(),
     entry_points={

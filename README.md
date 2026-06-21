@@ -1,219 +1,326 @@
 # AutoCut
 
-AutoCut 用语音识别为视频生成字幕，然后按你在 Markdown 文件里勾选的句子剪出新视频。整个流程不需要打开剪辑软件：转录视频，编辑文本，运行剪辑命令。
+> You can use AI to translate or explain this document and the rest of the project's documentation in your preferred language.
+>
+> 你可以使用 AI 将本文档和本项目的其他文档翻译成你偏好的语言，或为你解读其中的内容。 因此仓库通常不再提供其他语言版本的平行文档。
 
-## 功能
+AutoCut is a text-guided video/audio cutter.
 
-- 从视频或音频生成 `.srt` 字幕和 `.md` 选择文件
-- 在 `.md` 里勾选要保留的句子
-- 按字幕时间轴剪出 `_cut.mp4` 或 `_cut.mp3`
-- 支持本地 Whisper、faster-whisper 和 OpenAI Whisper API
-- 支持 CUDA GPU 转录
+It uses ASR model, like OpenAI whister, to transcribe a video into subtitles (`.srt` files), generates a Markdown selection file, then cuts the original media according to the sentences you mark as kept.
 
-## 安装
+```text
+video.mp4
+  │
+  │  1. transcribe
+  ▼
+video.srt        video.md
+subtitle timing  editable selection file
+  │                 │
+  │                 │  2. mark sentences in Markdown
+  │                 ▼
+  └────────────► selected subtitle ids
+                    │
+                    │  3. cut original media by .srt timestamps
+                    ▼
+              video_cut.mp4
+```
 
-推荐在虚拟环境中安装，避免污染系统 Python。
+## Features
+
+- Transcribe video/audio into `.srt` subtitles
+- Generate an editable `.md` selection file
+- Keep or remove sentences by checking Markdown boxes
+- Cut video/audio according to subtitle timestamps
+- Support local Whisper, faster-whisper, and OpenAI Whisper API
+- Support CUDA GPU transcription when available
+
+## Install
 
 ```bash
-git clone https://github.com/mli/autocut.git
+git clone https://github.com/LYK-love/autocut.git
 cd autocut
+
 python -m venv .venv
 source .venv/bin/activate
+
 pip install --upgrade pip
 pip install .
 ```
 
-也可以从 PyPI 安装：
+The default install is lightweight and supports Markdown editing, `.srt` handling,
+and local ffmpeg cutting. It does not install Whisper, Torch, or model weights.
+
+Install `ffmpeg` if it is not already available:
 
 ```bash
-pip install autocut-sub
-```
-
-额外模式按需安装：
-
-```bash
-pip install '.[faster]'  # faster-whisper
-pip install '.[openai]'  # OpenAI Whisper API
-pip install '.[all]'     # 全部可选依赖
-```
-
-还需要安装 `ffmpeg`：
-
-```bash
-# Ubuntu / Debian
-sudo apt update && sudo apt install ffmpeg
-
-# Arch Linux
-sudo pacman -S ffmpeg
-
 # macOS
 brew install ffmpeg
 
-# Windows / Scoop
-scoop install ffmpeg
+# Ubuntu / Debian
+sudo apt update && sudo apt install ffmpeg
 ```
 
-## GPU 安装
-
-AutoCut 是否使用 GPU 取决于 PyTorch 是否能使用 CUDA。先安装与你机器匹配的 CUDA 版 PyTorch，再安装 AutoCut。
-
-示例，CUDA 12.4：
+Optional backends:
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install --upgrade pip
-pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu124
-pip install .
+pip install '.[transcribe]'  # local Whisper transcription
+pip install '.[faster]'  # faster-whisper
+pip install '.[openai]'  # OpenAI Whisper API
+pip install '.[all]'     # all optional dependencies
 ```
 
-检查 GPU 是否可用：
+## Quick Start
 
-```bash
-python -c "import torch; print(torch.cuda.is_available())"
-```
-
-转录时可显式指定 GPU：
-
-```bash
-autocut -t video.mp4 --device cuda
-```
-
-如果显存不足，可以换小模型，或强制使用 CPU：
-
-```bash
-autocut -t video.mp4 --whisper-model small
-autocut -t video.mp4 --device cpu
-```
-
-## Docker
-
-CPU 镜像：
-
-```bash
-docker build -t autocut .
-docker run -it --rm -v /path/to/videos:/autocut/video autocut
-```
-
-GPU 镜像：
-
-```bash
-docker build -f Dockerfile.cuda -t autocut-gpu .
-docker run --gpus all -it --rm -v /path/to/videos:/autocut/video autocut-gpu
-```
-
-## 快速开始
-
-### 1. 转录视频
+### 1. Transcribe
 
 ```bash
 autocut -t video.mp4
 ```
 
-这会生成：
+This generates:
 
 ```text
 video.srt
 video.md
 ```
 
-默认模型是 `small`。可以指定更快或更强的模型：
+`video.srt` stores subtitle timestamps.
+`video.md` is the file you edit.
+
+You can choose a different Whisper model:
 
 ```bash
 autocut -t video.mp4 --whisper-model large-v3-turbo
-autocut -t video.mp4 --whisper-model medium --device cuda
 ```
 
-### 2. 编辑 Markdown
+Use GPU explicitly:
 
-打开 `video.md`，第一行表示“已经完成选择”：
-
-```md
-- [ ] <-- Mark if you are done editing.
+```bash
+autocut -t video.mp4 --device cuda
 ```
 
-改成：
+### 2. Edit the Markdown file
+
+Open `video.md`. It's recommended to use Typora as it's more illustrative.
+
+
+You can edit the Markdown manually, or use an AI coding agent to help decide
+which subtitle tasks to keep. I also maintain a companion Codex skill for this
+workflow:
+
+- https://github.com/LYK-love/autocut-skill
+
+The skill is designed to inspect AutoCut `.md` and `.srt` files, apply editing
+preferences such as keeping the last coherent take when a point is repeated, and
+then run the final AutoCut cutting step.
+
+At the top, mark editing as done:
 
 ```md
 - [x] <-- Mark if you are done editing.
 ```
 
-每条字幕前面的 `[ ]` 表示不保留，`[x]` 表示保留：
+Then mark the sentences you want to keep:
 
 ```md
-- [ ] [1,00:00]   < No Speech >
-- [x] [2,00:04]   这里是要保留的一句话
-- [ ] [3,00:08]   这里会被剪掉
+- [ ] [1,00:00]   This sentence will be removed.
+- [x] [2,00:04]   This sentence will be kept.
+- [ ] [3,00:08]   This sentence will be removed.
+- [x] [4,00:12]   This sentence will be kept.
 ```
 
-可以修正文案，方便自己阅读；但不要改字幕编号，例如 `[2,00:04]`。剪辑时 AutoCut 根据编号找到 `.srt` 中对应的时间段。
+`[ ]` means discard.
+`[x]` means keep.
 
-### 3. 剪辑视频
+You may edit the text for readability, but do not change the subtitle id such as `[2,00:04]`. AutoCut uses that id to find the corresponding timestamp in `video.srt`.
+
+### 3. Cut
 
 ```bash
 autocut -c video.mp4 video.srt video.md
 ```
 
-输出文件：
+This creates:
 
 ```text
 video_cut.mp4
 ```
 
-覆盖已有输出：
+Overwrite existing output:
 
 ```bash
 autocut -c video.mp4 video.srt video.md --force
 ```
 
-调整输出码率：
+Set output bitrate:
 
 ```bash
 autocut -c video.mp4 video.srt video.md --bitrate 20m
 ```
 
-## 常用命令
+## Remote Transcription, Local Cutting
 
-从字幕生成 Markdown 选择文件：
+If the original video is on a local machine, such as macOS, but Whisper should run
+on a GPU server, do not upload the full video just to download the cut video later.
+Keep the original video local, send only extracted audio to the server, then bring
+the generated `.srt` and `.md` files back for local editing and cutting.
+
+In this mode, the macOS side does not need `torch`, `torchaudio`,
+`openai-whisper`, faster-whisper, or any Whisper model weights. The macOS side
+only needs `ffmpeg` plus the lightweight AutoCut dependencies required for
+Markdown parsing and cutting. All ASR dependencies stay on the GPU server.
+
+This keeps network transfer small and uses each machine for the part it is good at:
+
+```text
+macOS:
+  original video
+  extract audio
+  edit Markdown
+  run ffmpeg cutting
+  no torch / whisper
+
+GPU server:
+  receive audio only
+  run Whisper
+  produce .srt and .md
+```
+
+### 1. Extract audio on macOS
+
+```bash
+ffmpeg -i video.mov -vn -ac 1 -ar 16000 video.wav
+```
+
+### 2. Send the audio to the GPU server
+
+```bash
+rsync -avh video.wav user@server:~/videos/transcribe_jobs/
+```
+
+### 3. Transcribe on the GPU server
+
+The server environment needs the transcription dependencies:
+
+```bash
+pip install '.[transcribe]'
+```
+
+```bash
+cd ~/videos/transcribe_jobs
+autocut -t video.wav --device cuda --whisper-model large-v3 --lang zh
+```
+
+This creates:
+
+```text
+video.srt
+video.md
+```
+
+### 4. Bring subtitle files back to macOS
+
+```bash
+rsync -avh user@server:~/videos/transcribe_jobs/video.srt .
+rsync -avh user@server:~/videos/transcribe_jobs/video.md .
+```
+
+### 5. Edit and cut locally
+
+Edit `video.md` on macOS, mark the kept lines with `[x]`, and mark the first line
+as done:
+
+```md
+- [x] <-- Mark if you are done editing.
+```
+
+Then cut the original local video:
+
+```bash
+autocut -c video.mov video.srt video.md --bitrate 20m
+```
+
+The output is:
+
+```text
+video_cut.mp4
+```
+
+## Workflow Summary
+
+```text
+Command:
+  autocut -t video.mp4
+
+Output:
+  video.srt  # subtitle timing
+  video.md   # editable selection file
+
+User:
+  edit video.md
+  mark kept sentences with [x]
+
+Command:
+  autocut -c video.mp4 video.srt video.md
+
+Output:
+  video_cut.mp4
+```
+
+## Common Commands
+
+Generate Markdown from an existing `.srt` file:
 
 ```bash
 autocut -m video.srt video.mp4
-autocut -m video.srt
 ```
 
-只按 `.srt` 剪辑，不使用 Markdown：
+Cut using all subtitle segments in `.srt`, without Markdown selection:
 
 ```bash
 autocut -c video.mp4 video.srt
 ```
 
-生成紧凑版字幕，方便编辑：
+Transcribe in English:
 
 ```bash
-autocut -s video.srt
+autocut -t video.mp4 --lang en
 ```
 
-把紧凑版字幕转回标准 `.srt`：
+Transcribe in Chinese:
 
 ```bash
-autocut -s video_compact.srt
+autocut -t video.mp4 --lang zh
 ```
 
-监听一个目录，自动处理新视频：
+Use faster-whisper:
+
+```bash
+autocut -t video.mp4 --whisper-mode faster
+```
+
+Use OpenAI Whisper API:
+
+```bash
+export OPENAI_API_KEY=sk-...
+autocut -t video.mp4 --whisper-mode openai
+```
+
+Watch a folder and process new files:
 
 ```bash
 autocut -d /path/to/videos
 ```
 
-查看全部参数：
+Show all options:
 
 ```bash
 autocut --help
 ```
 
-## 支持的识别模型
+## Whisper Models
 
-`--whisper-model` 支持：
+Common model choices:
 
 ```text
 tiny
@@ -226,85 +333,28 @@ large-v3
 large-v3-turbo
 ```
 
-查看命令：
+Suggested usage:
 
-```bash
-autocut --help | grep -A2 -- '--whisper-model'
-```
+- `tiny` / `base`: fastest, lower accuracy
+- `small`: default, balanced speed and quality
+- `medium` / `large` / `large-v3`: better quality, slower
+- `large-v3-turbo`: strong quality-speed tradeoff
 
-模型选择建议：
+## Notes
 
-- `tiny` / `base`：速度快，准确率较低
-- `small`：默认选择，速度和质量较均衡
-- `medium` / `large` / `large-v3`：质量更好，更慢，建议使用 GPU
-- `large-v3-turbo`：速度和质量都较好的新模型
+- The `.srt` file is normally not modified during cutting.
+- The `.md` file controls which subtitle segments are kept.
+- The final cut is produced from the original media, not from the subtitle text.
+- Adjacent selected subtitle segments may be merged to avoid overly fragmented cuts.
 
-## 识别模式
-
-默认使用本地 Whisper：
-
-```bash
-autocut -t video.mp4 --whisper-mode whisper
-```
-
-使用 faster-whisper：
-
-```bash
-pip install '.[faster]'
-autocut -t video.mp4 --whisper-mode faster
-```
-
-使用 OpenAI Whisper API：
-
-```bash
-pip install '.[openai]'
-export OPENAI_API_KEY=sk-...
-autocut -t video.mp4 --whisper-mode openai --openai-rpm 3
-```
-
-## 字幕语言和提示词
-
-默认输出中文：
-
-```bash
-autocut -t video.mp4 --lang zh
-```
-
-英文：
-
-```bash
-autocut -t video.mp4 --lang en
-```
-
-给 Whisper 初始提示词：
-
-```bash
-autocut -t video.mp4 --prompt "这是一段关于深度学习的视频。"
-```
-
-## 编码
-
-默认编码是 `utf-8`。如果需要其他编码，转录和剪辑时要保持一致：
-
-```bash
-autocut -t video.mp4 --encoding gbk
-autocut -c video.mp4 video.srt video.md --encoding gbk
-```
-
-## Python API
-
-```python
-from autocut import Transcribe, load_audio
-```
-
-## 项目结构
+## Project Structure
 
 ```text
 autocut/
-  main.py          # CLI 参数和入口
-  transcribe.py    # 转录流程
-  whisper_model.py # Whisper / faster-whisper / OpenAI API 适配
-  cut.py           # 剪辑和合并
-  utils.py         # 字幕、Markdown、音频工具
-  type.py          # 模型、模式、语言定义
+  main.py          # CLI entry point
+  transcribe.py    # ASR transcription workflow
+  whisper_model.py # Whisper backend adapters
+  cut.py           # cutting and merging
+  utils.py         # subtitle, Markdown, and media utilities
+  type.py          # model and mode definitions
 ```

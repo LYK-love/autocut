@@ -1,6 +1,7 @@
 import logging
 import os
 import unittest
+from unittest import mock
 
 from parameterized import parameterized, param
 
@@ -64,3 +65,42 @@ class TestCut(unittest.TestCase):
         self.assertTrue(
             os.path.exists(namepart + "mp4") or os.path.exists(namepart + "mp3")
         )
+
+    @mock.patch("autocut.cut.platform.system", return_value="Linux")
+    def test_auto_video_encoder_falls_back_to_libx264(self, _):
+        args = TestArgs()
+        args.video_encoder = "auto"
+        cut = Cutter(args)
+
+        self.assertEqual(cut._select_video_encoder(), "libx264")
+
+    def test_libx264_video_encoder_args(self):
+        args = TestArgs()
+        args.video_encoder = "libx264"
+        cut = Cutter(args)
+
+        self.assertEqual(cut._select_video_encoder(), "libx264")
+        self.assertIn("-preset", cut._video_encoder_args())
+        self.assertIn("libx264", cut._video_encoder_args())
+
+    @mock.patch("autocut.cut.Cutter._ffmpeg_encoder_available", return_value=True)
+    @mock.patch("autocut.cut.platform.system", return_value="Darwin")
+    def test_auto_video_encoder_uses_videotoolbox_on_macos(self, *_):
+        args = TestArgs()
+        args.video_encoder = "auto"
+        cut = Cutter(args)
+
+        encoder_args = cut._video_encoder_args()
+        self.assertEqual(cut._select_video_encoder(), "h264_videotoolbox")
+        self.assertIn("h264_videotoolbox", encoder_args)
+        self.assertNotIn("-preset", encoder_args)
+
+    @mock.patch("autocut.cut.Cutter._ffmpeg_encoder_available", return_value=False)
+    @mock.patch("autocut.cut.platform.system", return_value="Darwin")
+    def test_explicit_videotoolbox_requires_encoder_support(self, *_):
+        args = TestArgs()
+        args.video_encoder = "h264_videotoolbox"
+        cut = Cutter(args)
+
+        with self.assertRaisesRegex(RuntimeError, "h264_videotoolbox"):
+            cut._select_video_encoder()

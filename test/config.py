@@ -46,6 +46,7 @@ class TestArgs:
     def __init__(self):
         self.inputs = []
         self.bitrate = "10m"
+        self.video_encoder = "auto"
         self.encoding = "utf-8"
         self.sampling_rate = 16000
         self.lang = "zh"

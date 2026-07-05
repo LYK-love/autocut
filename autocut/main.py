@@ -144,6 +144,16 @@ def main():
         help="The bitrate to export the cutted video, such as 10m, 1m, or 500k",
     )
     parser.add_argument(
+        "--video-encoder",
+        type=str,
+        default="auto",
+        choices=["auto", "libx264", "h264_videotoolbox"],
+        help=(
+            "Video encoder used during cutting. auto uses h264_videotoolbox "
+            "when available on macOS and otherwise falls back to libx264."
+        ),
+    )
+    parser.add_argument(
         "--vad", help="If or not use VAD", choices=["1", "0", "auto"], default="auto"
     )
     parser.add_argument(

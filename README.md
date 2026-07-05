@@ -31,6 +31,7 @@ subtitle timing  editable selection file
 - Generate an editable `.md` selection file
 - Keep or remove sentences by checking Markdown boxes
 - Cut video/audio according to subtitle timestamps
+- Use macOS VideoToolbox hardware video encoding when cutting on supported Macs
 - Support local Whisper, faster-whisper, OpenAI Whisper API, SenseVoiceSmall, and Qwen3-ASR
 - Support CUDA GPU transcription when available
 
@@ -183,6 +184,20 @@ Set output bitrate:
 
 ```bash
 autocut -c video.mp4 video.srt video.md --bitrate 20m
+```
+
+On macOS with an ffmpeg build that supports VideoToolbox, `--video-encoder auto`
+uses `h264_videotoolbox` for the video re-encode step. This is the default.
+You can also request it explicitly:
+
+```bash
+autocut -c video.mov video.srt video.md --video-encoder h264_videotoolbox --bitrate 20m
+```
+
+For bit-exact compatibility with the old software path, force libx264:
+
+```bash
+autocut -c video.mov video.srt video.md --video-encoder libx264 --bitrate 20m
 ```
 
 ## Remote Transcription, Local Cutting

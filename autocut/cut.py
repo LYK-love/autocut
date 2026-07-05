@@ -1,5 +1,6 @@
 import logging
 import os
+import platform
 import re
 import subprocess
 import tempfile
@@ -94,6 +95,66 @@ class Cutter:
         result = subprocess.run(cmd, check=False, capture_output=True, text=True)
         return bool(result.stdout.strip())
 
+    def _ffmpeg_encoder_available(self, encoder):
+        cmd = ["ffmpeg", "-hide_banner", "-encoders"]
+        result = subprocess.run(cmd, check=False, capture_output=True, text=True)
+        output = f"{result.stdout}\n{result.stderr}"
+        return result.returncode == 0 and encoder in output
+
+    def _select_video_encoder(self):
+        encoder = getattr(self.args, "video_encoder", "auto")
+        if encoder == "libx264":
+            return "libx264"
+
+        videotoolbox_available = (
+            platform.system() == "Darwin"
+            and self._ffmpeg_encoder_available("h264_videotoolbox")
+        )
+
+        if encoder == "h264_videotoolbox":
+            if not videotoolbox_available:
+                raise RuntimeError(
+                    "h264_videotoolbox is only available with an ffmpeg build "
+                    "that includes VideoToolbox on macOS. Use --video-encoder "
+                    "auto or --video-encoder libx264 on this machine."
+                )
+            return "h264_videotoolbox"
+
+        if encoder == "auto" and videotoolbox_available:
+            return "h264_videotoolbox"
+
+        return "libx264"
+
+    def _video_encoder_args(self):
+        encoder = self._select_video_encoder()
+        logging.info(f"Using video encoder: {encoder}")
+        if encoder == "h264_videotoolbox":
+            return [
+                "-c:v",
+                "h264_videotoolbox",
+                "-b:v",
+                self.args.bitrate,
+                "-pix_fmt",
+                "yuv420p",
+                "-allow_sw",
+                "1",
+                "-movflags",
+                "+faststart",
+            ]
+
+        return [
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-b:v",
+            self.args.bitrate,
+            "-pix_fmt",
+            "yuv420p",
+            "-movflags",
+            "+faststart",
+        ]
+
     def _write_filter_script(self, segments, is_video_file, has_audio):
         fd, filter_fn = tempfile.mkstemp(suffix=".fffilter", text=True)
         with os.fdopen(fd, "w", encoding=self.args.encoding) as f:
@@ -157,20 +218,7 @@ class Cutter:
                 filter_fn,
             ]
             if is_video_file:
-                cmd += [
-                    "-map",
-                    "[outv]",
-                    "-c:v",
-                    "libx264",
-                    "-preset",
-                    "veryfast",
-                    "-b:v",
-                    self.args.bitrate,
-                    "-pix_fmt",
-                    "yuv420p",
-                    "-movflags",
-                    "+faststart",
-                ]
+                cmd += ["-map", "[outv]"] + self._video_encoder_args()
                 if has_audio:
                     cmd += ["-map", "[outa]", "-c:a", "aac", "-b:a", "192k"]
             else:

@@ -1,0 +1,8 @@
+include LICENSE
+include README.md
+include pyproject.toml
+include setup.cfg
+include setup.py
+recursive-include docs *.md
+recursive-include scripts *.py
+recursive-include test *.py *.srt *.md *.mp3 *.mp4 *.mov *.mkv *.flv *.MP4

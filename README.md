@@ -1,8 +1,7 @@
 # AutoCut
-
 > You can use AI to translate or explain this document and the rest of the project's documentation in your preferred language.
 >
-> 你可以使用 AI 将本文档和本项目的其他文档翻译成你偏好的语言，或为你解读其中的内容。 因此仓库通常不再提供其他语言版本的平行文档。
+> 你可以使用 AI 将本文档和本项目的其他文档翻译成你偏好的语言，或为你解读其中的内容。
 
 AutoCut is a text-guided video/audio cutter.
 
@@ -36,6 +35,13 @@ subtitle timing  editable selection file
 - Support CUDA GPU transcription when available
 
 See [ASR models](docs/asr-models.md) for supported transcription backends and recommended use cases.
+
+Additional documentation:
+
+- [CLI reference](docs/cli.md)
+- [Workflow guide](docs/workflows.md)
+- [Design notes](docs/design.md)
+- [Dubbing from cut subtitles](docs/dubbing-from-subtitles.md)
 
 ## Install
 
@@ -194,6 +200,22 @@ You can also request it explicitly:
 autocut -c video.mov video.srt video.md --video-encoder h264_videotoolbox --bitrate 20m
 ```
 
+AutoCut can also ask ffmpeg to use VideoToolbox for hardware decode. This path
+is opt-in because AutoCut's trim/concat filter graph can be slower with
+hardware decode than with software decode on some Mac inputs:
+
+```bash
+autocut -c video.mov video.srt video.md --video-encoder h264_videotoolbox --video-decoder videotoolbox
+```
+
+The default decoder is the stable software path. If you see driver-specific
+timestamp, sync, or speed issues while experimenting with hardware decode, keep
+hardware encoding but disable hardware decode explicitly:
+
+```bash
+autocut -c video.mov video.srt video.md --video-encoder h264_videotoolbox --video-decoder none
+```
+
 For bit-exact compatibility with the old software path, force libx264:
 
 ```bash
@@ -294,6 +316,59 @@ The output is:
 ```text
 video_cut.mp4
 ```
+
+### 6. Send the rough cut to DaVinci Resolve
+
+If you want to continue fine editing in DaVinci Resolve, keep the original media
+local and use the `.srt` plus edited `.md` to create a Resolve rough-cut
+timeline.
+
+First finish editing `video.md`:
+
+```md
+- [x] <-- Mark if you are done editing.
+```
+
+Then start Resolve, open a project, enable external scripting in Resolve
+preferences, and run:
+
+```bash
+autocut-resolve import video.mov video.srt video.md
+```
+
+AutoCut imports the original media, creates a timeline named
+`video_autocut_rough`, and appends each kept subtitle segment as an editable
+timeline clip. This is meant for rough cutting only; you can then trim, grade,
+mix, and polish inside Resolve.
+
+If the Resolve scripting bridge is unavailable, export an interchange file and
+import it from Resolve:
+
+```bash
+autocut-resolve export-fcpxml video.mov video.srt video.md
+```
+
+To add a macOS menu script under Resolve's `Workspace > Scripts` menu:
+
+```bash
+autocut-resolve install-script
+```
+
+Restart Resolve after installing the script. By default it is installed under
+your user-level Resolve scripts folder. The installed menu item asks you to
+choose the original media, `.srt`, and edited `.md`, then calls the same
+`autocut-resolve import` command.
+
+### One-command local audio plus remote ASR harness
+
+For the Mac-local video plus GPU-server ASR workflow, you can use:
+
+```bash
+autocut-harness remote-asr video.mov --remote user@server --remote-dir ~/videos/transcribe_jobs
+```
+
+This extracts `video.wav`, uploads only that audio file, runs server-side ASR,
+and downloads `video.srt` plus `video.md` next to the original video.
 
 ## Workflow Summary
 
@@ -427,6 +502,28 @@ autocut/
   transcribe.py    # ASR transcription workflow
   whisper_model.py # Whisper backend adapters
   cut.py           # cutting and merging
+  selection.py     # selected subtitle segment parsing
+  resolve.py       # DaVinci Resolve and FCPXML export helpers
+  harness.py       # local audio plus remote ASR orchestration
   utils.py         # subtitle, Markdown, and media utilities
   type.py          # model and mode definitions
 ```
+
+## Development
+
+Install the package in editable mode with test dependencies:
+
+```bash
+pip install -e '.[test]'
+```
+
+Run the lightweight test suite:
+
+```bash
+pytest test/test_selection.py test/test_cut.py
+```
+
+Model-specific ASR tests require their matching optional dependencies and model
+runtime. They are not part of the default CI job.
+
+This project was written collaboratively by humans and AI.

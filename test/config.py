@@ -43,10 +43,13 @@ TEST_MEDIA_FILE_SIMPLE = ["test001.mp4", "test005.mp3"]
 
 
 class TestArgs:
+    __test__ = False
+
     def __init__(self):
         self.inputs = []
         self.bitrate = "10m"
         self.video_encoder = "auto"
+        self.video_decoder = "none"
         self.encoding = "utf-8"
         self.sampling_rate = 16000
         self.lang = "zh"

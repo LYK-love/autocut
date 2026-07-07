@@ -104,3 +104,32 @@ class TestCut(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "h264_videotoolbox"):
             cut._select_video_encoder()
+
+    @mock.patch("autocut.cut.platform.system", return_value="Linux")
+    def test_auto_video_decoder_falls_back_to_none(self, _):
+        args = TestArgs()
+        args.video_decoder = "auto"
+        cut = Cutter(args)
+
+        self.assertEqual(cut._select_video_decoder(), "none")
+        self.assertEqual(cut._video_decoder_args(), [])
+
+    @mock.patch("autocut.cut.Cutter._ffmpeg_hwaccel_available", return_value=True)
+    @mock.patch("autocut.cut.platform.system", return_value="Darwin")
+    def test_auto_video_decoder_uses_videotoolbox_on_macos(self, *_):
+        args = TestArgs()
+        args.video_decoder = "auto"
+        cut = Cutter(args)
+
+        self.assertEqual(cut._select_video_decoder(), "videotoolbox")
+        self.assertEqual(cut._video_decoder_args(), ["-hwaccel", "videotoolbox"])
+
+    @mock.patch("autocut.cut.Cutter._ffmpeg_hwaccel_available", return_value=False)
+    @mock.patch("autocut.cut.platform.system", return_value="Darwin")
+    def test_explicit_videotoolbox_decoder_requires_hwaccel_support(self, *_):
+        args = TestArgs()
+        args.video_decoder = "videotoolbox"
+        cut = Cutter(args)
+
+        with self.assertRaisesRegex(RuntimeError, "VideoToolbox hardware decode"):
+            cut._select_video_decoder()

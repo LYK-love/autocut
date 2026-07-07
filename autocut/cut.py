@@ -101,6 +101,12 @@ class Cutter:
         output = f"{result.stdout}\n{result.stderr}"
         return result.returncode == 0 and encoder in output
 
+    def _ffmpeg_hwaccel_available(self, hwaccel):
+        cmd = ["ffmpeg", "-hide_banner", "-hwaccels"]
+        result = subprocess.run(cmd, check=False, capture_output=True, text=True)
+        output = f"{result.stdout}\n{result.stderr}"
+        return result.returncode == 0 and hwaccel in output
+
     def _select_video_encoder(self):
         encoder = getattr(self.args, "video_encoder", "auto")
         if encoder == "libx264":
@@ -154,6 +160,38 @@ class Cutter:
             "-movflags",
             "+faststart",
         ]
+
+    def _select_video_decoder(self):
+        decoder = getattr(self.args, "video_decoder", "none")
+        if decoder == "none":
+            return "none"
+
+        videotoolbox_available = (
+            platform.system() == "Darwin"
+            and self._ffmpeg_hwaccel_available("videotoolbox")
+        )
+
+        if decoder == "videotoolbox":
+            if not videotoolbox_available:
+                raise RuntimeError(
+                    "VideoToolbox hardware decode is only available with an "
+                    "ffmpeg build that includes videotoolbox hwaccel on macOS. "
+                    "Use --video-decoder auto or --video-decoder none on this "
+                    "machine."
+                )
+            return "videotoolbox"
+
+        if decoder == "auto" and videotoolbox_available:
+            return "videotoolbox"
+
+        return "none"
+
+    def _video_decoder_args(self):
+        decoder = self._select_video_decoder()
+        logging.info(f"Using video decoder: {decoder}")
+        if decoder == "videotoolbox":
+            return ["-hwaccel", "videotoolbox"]
+        return []
 
     def _write_filter_script(self, segments, is_video_file, has_audio):
         fd, filter_fn = tempfile.mkstemp(suffix=".fffilter", text=True)
@@ -212,6 +250,10 @@ class Cutter:
                 "-hide_banner",
                 "-loglevel",
                 "error",
+            ]
+            if is_video_file:
+                cmd += self._video_decoder_args()
+            cmd += [
                 "-i",
                 media_fn,
                 "-filter_complex_script",

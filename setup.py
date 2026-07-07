@@ -16,11 +16,13 @@ transcribe_requirements = [
 
 
 setup(
-    name="autocut-sub",
+    name="autocut",
     install_requires=requirements,
-    url="https://github.com/mli/autocut",
+    python_requires=">=3.9",
+    url="https://github.com/LYK-love/autocut",
     project_urls={
-        "source": "https://github.com/mli/autocut",
+        "source": "https://github.com/LYK-love/autocut",
+        "documentation": "https://github.com/LYK-love/autocut/tree/main/docs",
     },
     license="Apache License 2.0",
     long_description=open("README.md", "r", encoding="utf-8").read(),
@@ -30,7 +32,7 @@ setup(
         + ["moviepy", "openai", "faster-whisper", "funasr", "qwen-asr"],
         "transcribe": transcribe_requirements,
         "merge": ["moviepy"],
-        "test": ["parameterized"],
+        "test": ["parameterized", "pytest"],
         "openai": transcribe_requirements + ["openai"],
         "faster": transcribe_requirements + ["faster-whisper"],
         "sensevoice": transcribe_requirements + ["funasr"],
@@ -40,6 +42,8 @@ setup(
     entry_points={
         "console_scripts": [
             "autocut = autocut.main:main",
+            "autocut-resolve = autocut.resolve:main",
+            "autocut-harness = autocut.harness:main",
         ]
     },
 )

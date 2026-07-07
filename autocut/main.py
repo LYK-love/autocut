@@ -154,6 +154,18 @@ def main():
         ),
     )
     parser.add_argument(
+        "--video-decoder",
+        type=str,
+        default="none",
+        choices=["auto", "none", "videotoolbox"],
+        help=(
+            "Hardware video decoder used during cutting. none keeps the "
+            "stable software decode path, auto uses VideoToolbox when "
+            "available on macOS, and videotoolbox requires VideoToolbox "
+            "support."
+        ),
+    )
+    parser.add_argument(
         "--vad", help="If or not use VAD", choices=["1", "0", "auto"], default="auto"
     )
     parser.add_argument(
